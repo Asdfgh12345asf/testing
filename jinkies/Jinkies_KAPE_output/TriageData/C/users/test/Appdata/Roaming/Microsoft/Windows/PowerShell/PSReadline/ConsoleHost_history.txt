@@ -1,0 +1,2 @@
+cd C:\Users\Velma\Downloads\
+.\Sysmon64.exe -accepteula -i .\sysmonconfig-export.xml

@@ -1,0 +1,2 @@
+system,timestamp_utc,timestamp_local,timezone,ipv4,macv4,ipv6,macv6,netbios,domain,dns,os,osinstall,csid,agid,iswow64process,is64bitOS,isAdmin,output,version
+"CrowdResponse","2023-10-06T17:45:10Z","2023-10-06T18:45:10","GMT Standard Time","192.168.157.144","00-0C-29-A5-D6-28","fe80::a94d:3c5d:b0c7:221b","00-0C-29-A5-D6-28","VELMAD100","WORKGROUP","velmad100","Windows 10 Pro","2020-11-06T12:24:27Z","NoCSID","NoAGID","FALSE","TRUE","TRUE","CrowdResponse.xml","1.0.6.0"

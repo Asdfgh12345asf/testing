@@ -1,0 +1,239 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'VPC with Subnet, Internet Gateway, NAT Gateway, EIP, S3 Bucket, and Athena table for VPC Flow Logs'
+
+Resources:
+  VPCTestVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: '10.0.0.0/24'
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  VPCTestSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId:
+        Ref: 'VPCTestVPC'
+      CidrBlock: '10.0.0.0/24'
+      MapPublicIpOnLaunch: false
+
+  VPCTestInternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+
+  VPCTestGatewayToVpcAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId:
+        Ref: 'VPCTestVPC'
+      InternetGatewayId:
+        Ref: 'VPCTestInternetGateway'
+
+  VPCTestEIP:
+    Type: 'AWS::EC2::EIP'
+
+  VPCTestNatGateway:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+          - 'VPCTestEIP'
+          - 'AllocationId'
+      SubnetId:
+        Ref: 'VPCTestSubnet'
+
+  VPCTestS3Bucket:
+    Type: 'AWS::S3::Bucket'
+
+  VPCTestBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket:
+        Ref: 'VPCTestS3Bucket'
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 's3:PutObject'
+            Effect: 'Allow'
+            Resource:
+              Fn::Sub: 'arn:aws:s3:::${VPCTestS3Bucket}/AWSLogs/${AWS::AccountId}/*'
+            Principal:
+              Service: 'delivery.logs.amazonaws.com'
+
+  VPCTestFlowLog:
+    Type: 'AWS::EC2::FlowLog'
+    Properties:
+      ResourceId:
+        Ref: 'VPCTestVPC'
+      ResourceType: 'VPC'
+      TrafficType: 'ALL'
+      LogDestinationType: 's3'
+      LogDestination:
+        Fn::Sub: 'arn:aws:s3:::${VPCTestS3Bucket}'
+      LogFormat: '${account-id} ${action} ${bytes} ${dstaddr} ${dstport} ${end} ${flow-direction} ${instance-id} ${interface-id} ${log-status} ${packets} ${pkt-dst-aws-service} ${pkt-dstaddr} ${pkt-src-aws-service} ${pkt-srcaddr} ${protocol} ${srcaddr} ${srcport} ${tcp-flags} ${traffic-path} ${version}'
+  VPCTestGlueDatabase:
+    Type: 'AWS::Glue::Database'
+    Properties:
+      CatalogId:
+        Ref: 'AWS::AccountId'
+      DatabaseInput:
+        Name: 'vpc_flow_logs_db'
+        Description: 'Database for VPC flow logs'
+
+  VPCTestGlueTable:
+    Type: 'AWS::Glue::Table'
+    Properties:
+      CatalogId:
+        Ref: 'AWS::AccountId'
+      DatabaseName:
+        Ref: 'VPCTestGlueDatabase'
+      TableInput:
+        Name: 'vpc_flow_logs_table'
+        Description: 'Athena table for VPC flow logs'
+        TableType: 'EXTERNAL_TABLE'
+        PartitionKeys:
+          - Name: 'region'
+            Type: 'string'
+          - Name: 'day'
+            Type: 'string'
+        Parameters:
+          classification: 'csv'
+          'skip.header.line.count': '1'
+          'projection.enabled': 'true'
+          'projection.region.type': 'enum'
+          'projection.region.values': 'us-east-1,us-west-1,us-east-2,us-west-2'
+          'projection.day.type': 'date'
+          'projection.day.range': '2023/08/01,NOW'
+          'projection.day.format': 'yyyy/MM/dd'
+          'storage.location.template':
+            !Join
+              - ''
+              - - 's3://'
+                - !Ref VPCTestS3Bucket
+                - '/AWSLogs/'
+                - !Ref 'AWS::AccountId'
+                - '/vpcflowlogs/${region}/${day}'
+        StorageDescriptor:
+          Columns:
+            - Name: 'account-id'
+              Type: 'string'
+            - Name: 'action'
+              Type: 'string'
+            - Name: 'bytes'
+              Type: 'bigint'
+            - Name: 'dstaddr'
+              Type: 'string'
+            - Name: 'dstport'
+              Type: 'int'
+            - Name: 'end'
+              Type: 'bigint'
+            - Name: 'flow-direction'
+              Type: 'string'
+            - Name: 'instance-id'
+              Type: 'string'
+            - Name: 'interface-id'
+              Type: 'string'
+            - Name: 'log-status'
+              Type: 'string'
+            - Name: 'packets'
+              Type: 'bigint'
+            - Name: 'pkt-dst-aws-service'
+              Type: 'string'
+            - Name: 'pkt-dstaddr'
+              Type: 'string'
+            - Name: 'pkt-src-aws-service'
+              Type: 'string'
+            - Name: 'pkt-srcaddr'
+              Type: 'string'
+            - Name: 'protocol'
+              Type: 'bigint'
+            - Name: 'srcaddr'
+              Type: 'string'
+            - Name: 'srcport'
+              Type: 'int'
+            - Name: 'tcp-flags'
+              Type: 'string'
+            - Name: 'traffic-path'
+              Type: 'string'
+            - Name: 'version'
+              Type: 'int'
+          Location:
+            Fn::Sub: 's3://${VPCTestS3Bucket}/AWSLogs/${AWS::AccountId}/'
+          InputFormat: 'org.apache.hadoop.mapred.TextInputFormat'
+          OutputFormat: 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+          SerdeInfo:
+            SerializationLibrary: 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe'
+            Parameters:
+              field.delim: ' '
+              serialization.format: ' '
+  VPCTestS3BucketDeletionLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: 'index.handler'
+      Role: !GetAtt 'LambdaExecutionRole.Arn'
+      FunctionName: 'S3BucketDeletion'
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          def handler(event, context):
+              s3 = boto3.resource('s3')
+              bucket = s3.Bucket(event['ResourceProperties']['BucketName'])
+
+              if event['RequestType'] == 'Delete':
+                  bucket.objects.all().delete()
+                  
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+
+      Runtime: 'python3.8'
+
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: 'Allow'
+          Principal:
+            Service: 'lambda.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Policies:
+      - PolicyName: 'S3DeletionPolicy'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: 'Allow'
+            Action: 's3:DeleteObject'
+            Resource: !Sub 'arn:aws:s3:::${VPCTestS3Bucket}/*'
+          - Effect: 'Allow'
+            Action: 's3:ListBucket'
+            Resource: !Sub 'arn:aws:s3:::${VPCTestS3Bucket}'
+
+  S3BucketDeletion:
+    Type: 'Custom::S3BucketDeletion'
+    Properties:
+      ServiceToken: !GetAtt 'VPCTestS3BucketDeletionLambda.Arn'
+      BucketName: !Ref 'VPCTestS3Bucket'
+  VPCTestRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId:
+        Ref: 'VPCTestVPC'
+
+  VPCTestRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId:
+        Ref: 'VPCTestRouteTable'
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+        Ref: 'VPCTestInternetGateway'
+
+  VPCTestSubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId:
+        Ref: 'VPCTestSubnet'
+      RouteTableId:
+        Ref: 'VPCTestRouteTable'
